@@ -594,7 +594,29 @@ unsigned int add_ch(unsigned char ch, unsigned char* buf, unsigned int idx) {
 }
 
 
-static void parse_alphanumeric(struct Flex * flex, unsigned int * phaseptr, unsigned int mw1, unsigned int len, int frag, int cont, int flex_groupmessage, int flex_groupbit) {
+static void parse_capcode(struct Flex * flex, int flex_groupmessage, int flex_groupbit) {
+    verbprintf(0, "%010" PRId64, flex->Decode.capcode);
+    // Bail after printing the capcode if not a group
+    // Bail if not alnum (uncertain which types support group, remove to apply to others)
+    if(flex_groupmessage == 0 || !is_alphanumeric_page(flex)) {
+        return;
+    }
+    // bierviltje #123: https://github.com/EliasOenal/multimon-ng/issues/123
+    // join all group codes in the capcode field, space delimited
+    int endpoint = flex->GroupHandler.GroupCodes[flex_groupbit][CAPCODES_INDEX];
+    for(int g = 1; g <= endpoint; g++) {
+        verbprintf(1, "FLEX Group message output: Groupbit: %i Total Capcodes; %i; index %i; Capcode: [%010" PRId64 "]\n", flex_groupbit, endpoint, g, flex->GroupHandler.GroupCodes[flex_groupbit][g]);
+        // leading space is delimiter, replace is , or otherwise for your parse code
+        verbprintf(0, " %010" PRId64, flex->GroupHandler.GroupCodes[flex_groupbit][g]);
+    }
+    // reset the value
+    flex->GroupHandler.GroupCodes[flex_groupbit][CAPCODES_INDEX] = 0;
+    flex->GroupHandler.GroupFrame[flex_groupbit] = -1;
+    flex->GroupHandler.GroupCycle[flex_groupbit] = -1;
+}
+
+
+static void parse_alphanumeric(struct Flex * flex, unsigned int * phaseptr, unsigned int mw1, unsigned int len, int frag, int cont) {
         if (flex==NULL) return;
 
         char frag_flag = '?';
@@ -616,23 +638,9 @@ static void parse_alphanumeric(struct Flex * flex, unsigned int * phaseptr, unsi
             currentChar += add_ch((dw >> 14) & 0x7Fl, message, currentChar);
         }
         message[currentChar] = '\0';
-
-// Implemented bierviltje code from ticket: https://github.com/EliasOenal/multimon-ng/issues/123# 
-        if(flex_groupmessage == 1) {
-                int endpoint = flex->GroupHandler.GroupCodes[flex_groupbit][CAPCODES_INDEX];
-                for(int g = 1; g <= endpoint;g++)
-                {
-                        verbprintf(1, "FLEX Group message output: Groupbit: %i Total Capcodes; %i; index %i; Capcode: [%010" PRId64 "]\n", flex_groupbit, endpoint, g, flex->GroupHandler.GroupCodes[flex_groupbit][g]);
-                        verbprintf(0, "%010" PRId64 "|", flex->GroupHandler.GroupCodes[flex_groupbit][g]);
-                }
-
-                // reset the value
-                flex->GroupHandler.GroupCodes[flex_groupbit][CAPCODES_INDEX] = 0;
-                flex->GroupHandler.GroupFrame[flex_groupbit] = -1;
-                flex->GroupHandler.GroupCycle[flex_groupbit] = -1;
-        } 
     verbprintf(0, message);
 }
+
 
 static void parse_numeric(struct Flex * flex, unsigned int * phaseptr, int j) {
   if (flex==NULL) return;
@@ -912,11 +920,14 @@ static void decode_phase(struct Flex * flex, char PhaseNo) {
     if (is_tone_page(flex))
       mw1 = len = 0;
 
-    verbprintf(0, "FLEX|%i/%i|%02i.%03i.%c|%010" PRId64 "|%c%c|%1d|", flex->Sync.baud, flex->Sync.levels, flex->FIW.cycleno, flex->FIW.frameno, PhaseNo, flex->Decode.capcode, (flex->Decode.long_address ? 'L' : 'S'), (flex_groupmessage ? 'G' : 'S'), flex->Decode.type);
+    verbprintf(0, "FLEX|%i/%i|%02i.%03i.%c|", flex->Sync.baud, flex->Sync.levels, flex->FIW.cycleno, flex->FIW.frameno, PhaseNo);
+    parse_capcode(flex, flex_groupmessage, flex_groupbit);
+    verbprintf(0, "|%c%c|%1d|", (flex->Decode.long_address ? 'L' : 'S'), (flex_groupmessage ? 'G' : 'S'), flex->Decode.type);
+
     // Check if this is an alpha message
     if (is_alphanumeric_page(flex)) {
       verbprintf(0, "ALN|");
-      parse_alphanumeric(flex, phaseptr, mw1, len, frag, cont, flex_groupmessage, flex_groupbit);
+      parse_alphanumeric(flex, phaseptr, mw1, len, frag, cont);
     }
     else if (is_numeric_page(flex)) {
       verbprintf(0, "NUM|");
